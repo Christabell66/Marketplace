@@ -37,3 +37,26 @@
         (ok item-id)
     )
 )
+
+
+(define-public (purchase-item (item-id uint))
+    (let
+        (
+            (item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND))
+            (price (get price item))
+            (seller (get owner item))
+        )
+        (asserts! (get is-listed item) ERR-NOT-FOUND)
+        (try! (stx-transfer? price tx-sender seller))
+        (map-set items
+            { item-id: item-id }
+            {
+                owner: tx-sender,
+                price: price,
+                title: (get title item),
+                is-listed: false
+            }
+        )
+        (ok true)
+    )
+)
