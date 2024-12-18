@@ -60,3 +60,9 @@
         (ok true)
     )
 )
+
+
+;; Read-only Functions
+(define-read-only (get-item (item-id uint))
+    (map-get? items {item-id: item-id})
+)
