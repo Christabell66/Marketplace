@@ -198,3 +198,330 @@
         (ok true)
     )
 )
+
+
+
+;; Add to Data Variables
+(define-map item-reviews
+    { item-id: uint, reviewer: principal }
+    { 
+        rating: uint,
+        comment: (string-ascii 200),
+        timestamp: uint
+    }
+)
+
+(define-public (add-item-review (item-id uint) (rating uint) (comment (string-ascii 200)))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (<= rating u5) (err u401))
+        (map-set item-reviews
+            { item-id: item-id, reviewer: tx-sender }
+            { 
+                rating: rating,
+                comment: comment,
+                timestamp: block-height
+            }
+        )
+        (ok true)
+    )
+)
+
+
+
+(define-map wishlists
+    { user: principal, item-id: uint }
+    { added-at: uint }
+)
+
+(define-public (add-to-wishlist (item-id uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (map-set wishlists
+            { user: tx-sender, item-id: item-id }
+            { added-at: block-height }
+        )
+        (ok true)
+    )
+)
+
+
+
+(define-map flash-sales
+    { item-id: uint }
+    {
+        discounted-price: uint,
+        end-block: uint
+    }
+)
+
+(define-public (create-flash-sale (item-id uint) (discounted-price uint) (duration uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get owner item)) ERR-NOT-OWNER)
+        (map-set flash-sales
+            { item-id: item-id }
+            {
+                discounted-price: discounted-price,
+                end-block: (+ block-height duration)
+            }
+        )
+        (ok true)
+    )
+)
+
+
+
+
+(define-map referrals
+    { referrer: principal }
+    { 
+        total-sales: uint,
+        commission-earned: uint
+    }
+)
+
+(define-constant REFERRAL-PERCENTAGE u5)
+
+(define-public (purchase-with-referral (item-id uint) (referrer principal))
+    (let
+        (
+            (item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND))
+            (price (get price item))
+            (commission (/ (* price REFERRAL-PERCENTAGE) u100))
+        )
+        (try! (stx-transfer? commission tx-sender referrer))
+        (try! (purchase-item item-id u1))
+        (ok true)
+    )
+)
+
+
+
+(define-map trade-ins
+    { item-id: uint }
+    {
+        trade-value: uint,
+        accepted-categories: (list 5 uint)
+    }
+)
+
+(define-public (offer-trade-in (old-item-id uint) (new-item-id uint))
+    (let
+        (
+            (old-item (unwrap! (map-get? items {item-id: old-item-id}) ERR-NOT-FOUND))
+            (new-item (unwrap! (map-get? items {item-id: new-item-id}) ERR-NOT-FOUND))
+            (trade-in-details (unwrap! (map-get? trade-ins {item-id: new-item-id}) ERR-NOT-FOUND))
+        )
+        (asserts! (is-eq (get owner old-item) tx-sender) ERR-NOT-OWNER)
+        (ok true)
+    )
+)
+
+
+
+(define-map gift-cards
+    { card-id: uint }
+    {
+        value: uint,
+        creator: principal,
+        recipient: principal,
+        is-used: bool
+    }
+)
+
+(define-data-var next-card-id uint u1)
+
+(define-public (create-gift-card (value uint) (recipient principal))
+    (let ((card-id (var-get next-card-id)))
+        (try! (stx-transfer? value tx-sender (as-contract tx-sender)))
+        (map-set gift-cards
+            { card-id: card-id }
+            {
+                value: value,
+                creator: tx-sender,
+                recipient: recipient,
+                is-used: false
+            }
+        )
+        (var-set next-card-id (+ card-id u1))
+        (ok card-id)
+    )
+)
+
+
+(define-map loyalty-points
+    { user: principal }
+    { points: uint }
+)
+
+(define-constant POINTS-PER-PURCHASE u10)
+
+(define-public (redeem-points (points-to-redeem uint))
+    (let
+        (
+            (user-points (default-to { points: u0 } (map-get? loyalty-points {user: tx-sender})))
+            (current-points (get points user-points))
+        )
+        (asserts! (>= current-points points-to-redeem) (err u401))
+        (map-set loyalty-points
+            { user: tx-sender }
+            { points: (- current-points points-to-redeem) }
+        )
+        (try! (stx-transfer? (* points-to-redeem u1000) (as-contract tx-sender) tx-sender))
+        (ok true)
+    )
+)
+
+
+;; Bundle Deals - Allow sellers to create discounted item bundles
+(define-map bundles 
+    { bundle-id: uint }
+    {
+        items: (list 5 uint),
+        bundle-price: uint,
+        creator: principal,
+        is-active: bool
+    }
+)
+
+(define-data-var next-bundle-id uint u1)
+
+(define-public (create-bundle (item-ids (list 5 uint)) (bundle-price uint))
+    (let ((bundle-id (var-get next-bundle-id)))
+        ;; Verify ownership of all items
+        (map-set bundles
+            { bundle-id: bundle-id }
+            {
+                items: item-ids,
+                bundle-price: bundle-price,
+                creator: tx-sender,
+                is-active: true
+            }
+        )
+        (var-set next-bundle-id (+ bundle-id u1))
+        (ok bundle-id)
+    )
+)
+
+(define-map timed-listings
+    { item-id: uint }
+    {
+        end-height: uint,
+        min-price: uint
+    }
+)
+
+(define-public (create-timed-listing (item-id uint) (duration uint) (min-price uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get owner item)) ERR-NOT-OWNER)
+        (map-set timed-listings
+            { item-id: item-id }
+            {
+                end-height: (+ block-height duration),
+                min-price: min-price
+            }
+        )
+        (ok true)
+    )
+)
+
+
+(define-map featured-items
+    { item-id: uint }
+    {
+        featured-until: uint,
+        spotlight-position: uint
+    }
+)
+
+(define-public (feature-item (item-id uint) (duration uint) (position uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get owner item)) ERR-NOT-OWNER)
+        (map-set featured-items
+            { item-id: item-id }
+            {
+                featured-until: (+ block-height duration),
+                spotlight-position: position
+            }
+        )
+        (ok true)
+    )
+)
+
+
+(define-map trade-requests
+    { request-id: uint }
+    {
+        offered-item: uint,
+        requested-item: uint,
+        requester: principal,
+        status: (string-ascii 10)
+    }
+)
+
+(define-data-var next-request-id uint u1)
+
+(define-public (create-trade-request (offered-item uint) (requested-item uint))
+    (let ((request-id (var-get next-request-id)))
+        (map-set trade-requests
+            { request-id: request-id }
+            {
+                offered-item: offered-item,
+                requested-item: requested-item,
+                requester: tx-sender,
+                status: "pending"
+            }
+        )
+        (var-set next-request-id (+ request-id u1))
+        (ok request-id)
+    )
+)
+(define-map subscriptions
+    { subscription-id: uint }
+    {
+        item-id: uint,
+        subscriber: principal,
+        renewal-height: uint,
+        auto-renew: bool
+    }
+)
+
+(define-data-var next-subscription-id uint u1)
+
+(define-public (create-subscription (item-id uint) (duration uint))
+    (let ((subscription-id (var-get next-subscription-id)))
+        (map-set subscriptions
+            { subscription-id: subscription-id }
+            {
+                item-id: item-id,
+                subscriber: tx-sender,
+                renewal-height: (+ block-height duration),
+                auto-renew: true
+            }
+        )
+        (var-set next-subscription-id (+ subscription-id u1))
+        (ok subscription-id)
+    )
+)
+
+
+(define-map bulk-discounts
+    { item-id: uint }
+    {
+        min-quantity: uint,
+        discount-percentage: uint
+    }
+)
+
+(define-public (set-bulk-discount (item-id uint) (min-quantity uint) (discount uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get owner item)) ERR-NOT-OWNER)
+        (asserts! (<= discount u100) (err u401))
+        (map-set bulk-discounts
+            { item-id: item-id }
+            {
+                min-quantity: min-quantity,
+                discount-percentage: discount
+            }
+        )
+        (ok true)
+    )
+)
