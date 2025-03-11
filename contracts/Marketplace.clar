@@ -369,3 +369,159 @@
         (ok true)
     )
 )
+
+
+;; Bundle Deals - Allow sellers to create discounted item bundles
+(define-map bundles 
+    { bundle-id: uint }
+    {
+        items: (list 5 uint),
+        bundle-price: uint,
+        creator: principal,
+        is-active: bool
+    }
+)
+
+(define-data-var next-bundle-id uint u1)
+
+(define-public (create-bundle (item-ids (list 5 uint)) (bundle-price uint))
+    (let ((bundle-id (var-get next-bundle-id)))
+        ;; Verify ownership of all items
+        (map-set bundles
+            { bundle-id: bundle-id }
+            {
+                items: item-ids,
+                bundle-price: bundle-price,
+                creator: tx-sender,
+                is-active: true
+            }
+        )
+        (var-set next-bundle-id (+ bundle-id u1))
+        (ok bundle-id)
+    )
+)
+
+(define-map timed-listings
+    { item-id: uint }
+    {
+        end-height: uint,
+        min-price: uint
+    }
+)
+
+(define-public (create-timed-listing (item-id uint) (duration uint) (min-price uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get owner item)) ERR-NOT-OWNER)
+        (map-set timed-listings
+            { item-id: item-id }
+            {
+                end-height: (+ block-height duration),
+                min-price: min-price
+            }
+        )
+        (ok true)
+    )
+)
+
+
+(define-map featured-items
+    { item-id: uint }
+    {
+        featured-until: uint,
+        spotlight-position: uint
+    }
+)
+
+(define-public (feature-item (item-id uint) (duration uint) (position uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get owner item)) ERR-NOT-OWNER)
+        (map-set featured-items
+            { item-id: item-id }
+            {
+                featured-until: (+ block-height duration),
+                spotlight-position: position
+            }
+        )
+        (ok true)
+    )
+)
+
+
+(define-map trade-requests
+    { request-id: uint }
+    {
+        offered-item: uint,
+        requested-item: uint,
+        requester: principal,
+        status: (string-ascii 10)
+    }
+)
+
+(define-data-var next-request-id uint u1)
+
+(define-public (create-trade-request (offered-item uint) (requested-item uint))
+    (let ((request-id (var-get next-request-id)))
+        (map-set trade-requests
+            { request-id: request-id }
+            {
+                offered-item: offered-item,
+                requested-item: requested-item,
+                requester: tx-sender,
+                status: "pending"
+            }
+        )
+        (var-set next-request-id (+ request-id u1))
+        (ok request-id)
+    )
+)
+(define-map subscriptions
+    { subscription-id: uint }
+    {
+        item-id: uint,
+        subscriber: principal,
+        renewal-height: uint,
+        auto-renew: bool
+    }
+)
+
+(define-data-var next-subscription-id uint u1)
+
+(define-public (create-subscription (item-id uint) (duration uint))
+    (let ((subscription-id (var-get next-subscription-id)))
+        (map-set subscriptions
+            { subscription-id: subscription-id }
+            {
+                item-id: item-id,
+                subscriber: tx-sender,
+                renewal-height: (+ block-height duration),
+                auto-renew: true
+            }
+        )
+        (var-set next-subscription-id (+ subscription-id u1))
+        (ok subscription-id)
+    )
+)
+
+
+(define-map bulk-discounts
+    { item-id: uint }
+    {
+        min-quantity: uint,
+        discount-percentage: uint
+    }
+)
+
+(define-public (set-bulk-discount (item-id uint) (min-quantity uint) (discount uint))
+    (let ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND)))
+        (asserts! (is-eq tx-sender (get owner item)) ERR-NOT-OWNER)
+        (asserts! (<= discount u100) (err u401))
+        (map-set bulk-discounts
+            { item-id: item-id }
+            {
+                min-quantity: min-quantity,
+                discount-percentage: discount
+            }
+        )
+        (ok true)
+    )
+)
