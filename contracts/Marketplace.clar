@@ -825,4 +825,100 @@
 
 
 
+(define-map promo-codes
+    { code: (string-ascii 20) }
+    {
+        discount-percent: uint,
+        start-height: uint,
+        end-height: uint,
+        max-uses: uint,
+        current-uses: uint,
+        creator: principal
+    }
+)
 
+(define-public (create-promo-code 
+    (code (string-ascii 20)) 
+    (discount-percent uint)
+    (duration uint)
+    (max-uses uint))
+    (begin
+        (asserts! (<= discount-percent u100) (err u401))
+        (map-set promo-codes
+            { code: code }
+            {
+                discount-percent: discount-percent,
+                start-height: block-height,
+                end-height: (+ block-height duration),
+                max-uses: max-uses,
+                current-uses: u0,
+                creator: tx-sender
+            }
+        )
+        (ok true)
+    )
+)
+
+(define-public (purchase-with-promo (item-id uint) (promo-code (string-ascii 20)))
+    (let
+        ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND))
+         (promo (unwrap! (map-get? promo-codes {code: promo-code}) ERR-NOT-FOUND))
+         (discounted-price (- (get price item) 
+            (/ (* (get price item) (get discount-percent promo)) u100))))
+        (asserts! (< block-height (get end-height promo)) ERR-NOT-FOUND)
+        (asserts! (< (get current-uses promo) (get max-uses promo)) ERR-NOT-FOUND)
+        (try! (stx-transfer? discounted-price tx-sender (get owner item)))
+        (map-set promo-codes
+            { code: promo-code }
+            (merge promo { current-uses: (+ (get current-uses promo) u1) }))
+        (ok true)
+    )
+)
+
+
+
+(define-map collections
+    { collection-id: uint }
+    {
+        name: (string-ascii 50),
+        creator: principal,
+        items: (list 20 uint),
+        collection-price: uint,
+        active: bool
+    }
+)
+
+(define-data-var next-collection-id uint u1)
+
+(define-public (create-collection 
+    (name (string-ascii 50)) 
+    (item (list 20 uint))
+    (collection-price uint))
+    (let
+        ((collection-id (var-get next-collection-id)))
+        (map-set collections
+            { collection-id: collection-id }
+            {
+                name: name,
+                creator: tx-sender,
+                items: item,
+                collection-price: collection-price,
+                active: true
+            }
+        )
+        (var-set next-collection-id (+ collection-id u1))
+        (ok collection-id)
+    )
+)
+
+(define-public (purchase-collection (collection-id uint))
+    (let
+        ((collection (unwrap! (map-get? collections {collection-id: collection-id}) ERR-NOT-FOUND)))
+        (asserts! (get active collection) ERR-NOT-FOUND)
+        (try! (stx-transfer? (get collection-price collection) tx-sender (get creator collection)))
+        (map-set collections
+            { collection-id: collection-id }
+            (merge collection { active: false }))
+        (ok true)
+    )
+)
