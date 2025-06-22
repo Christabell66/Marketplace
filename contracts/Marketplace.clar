@@ -922,3 +922,167 @@
         (ok true)
     )
 )
+
+(define-map governance-signers
+    { signer: principal }
+    { is-active: bool, added-at: uint }
+)
+
+(define-map governance-proposals
+    { proposal-id: uint }
+    {
+        proposer: principal,
+        action-type: (string-ascii 20),
+        target-value: uint,
+        target-principal: (optional principal),
+        description: (string-ascii 100),
+        signatures: (list 10 principal),
+        executed: bool,
+        created-at: uint,
+        expires-at: uint
+    }
+)
+
+(define-data-var next-proposal-id uint u1)
+(define-data-var required-signatures uint u3)
+(define-data-var marketplace-fee-percentage uint u2)
+(define-data-var marketplace-paused bool false)
+
+(define-constant ERR-NOT-SIGNER (err u405))
+(define-constant ERR-ALREADY-SIGNED (err u406))
+(define-constant ERR-PROPOSAL-EXPIRED (err u407))
+(define-constant ERR-INSUFFICIENT-SIGNATURES (err u408))
+(define-constant ERR-ALREADY-EXECUTED (err u409))
+(define-constant ERR-MARKETPLACE-PAUSED (err u410))
+
+(define-public (add-governance-signer (new-signer principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get marketplace-admin)) ERR-NOT-OWNER)
+        (map-set governance-signers
+            { signer: new-signer }
+            { is-active: true, added-at: block-height }
+        )
+        (ok true)
+    )
+)
+
+(define-public (create-governance-proposal 
+    (action-type (string-ascii 20))
+    (target-value uint)
+    (target-principal (optional principal))
+    (description (string-ascii 100))
+    (duration uint))
+    (let
+        ((proposal-id (var-get next-proposal-id))
+         (signer-info (map-get? governance-signers { signer: tx-sender })))
+        (asserts! (and (is-some signer-info) (get is-active (unwrap-panic signer-info))) ERR-NOT-SIGNER)
+        (map-set governance-proposals
+            { proposal-id: proposal-id }
+            {
+                proposer: tx-sender,
+                action-type: action-type,
+                target-value: target-value,
+                target-principal: target-principal,
+                description: description,
+                signatures: (list tx-sender),
+                executed: false,
+                created-at: block-height,
+                expires-at: (+ block-height duration)
+            }
+        )
+        (var-set next-proposal-id (+ proposal-id u1))
+        (ok proposal-id)
+    )
+)
+
+(define-public (sign-proposal (proposal-id uint))
+    (let
+        ((proposal (unwrap! (map-get? governance-proposals { proposal-id: proposal-id }) ERR-NOT-FOUND))
+         (signer-info (map-get? governance-signers { signer: tx-sender }))
+         (current-signatures (get signatures proposal)))
+        (asserts! (and (is-some signer-info) (get is-active (unwrap-panic signer-info))) ERR-NOT-SIGNER)
+        (asserts! (< block-height (get expires-at proposal)) ERR-PROPOSAL-EXPIRED)
+        (asserts! (not (get executed proposal)) ERR-ALREADY-EXECUTED)
+        (asserts! (is-none (index-of current-signatures tx-sender)) ERR-ALREADY-SIGNED)
+        (map-set governance-proposals
+            { proposal-id: proposal-id }
+            (merge proposal { signatures: (unwrap-panic (as-max-len? (append current-signatures tx-sender) u10)) })
+        )
+        (ok true)
+    )
+)
+
+(define-public (execute-proposal (proposal-id uint))
+    (let
+        ((proposal (unwrap! (map-get? governance-proposals { proposal-id: proposal-id }) ERR-NOT-FOUND))
+         (signature-count (len (get signatures proposal))))
+        (asserts! (>= signature-count (var-get required-signatures)) ERR-INSUFFICIENT-SIGNATURES)
+        (asserts! (< block-height (get expires-at proposal)) ERR-PROPOSAL-EXPIRED)
+        (asserts! (not (get executed proposal)) ERR-ALREADY-EXECUTED)
+        
+        (if (is-eq (get action-type proposal) "set-fee")
+            (var-set marketplace-fee-percentage (get target-value proposal))
+            (if (is-eq (get action-type proposal) "pause-marketplace")
+                (var-set marketplace-paused (> (get target-value proposal) u0))
+                (if (is-eq (get action-type proposal) "set-threshold")
+                    (var-set required-signatures (get target-value proposal))
+                    false
+                )
+            )
+        )
+        
+        (map-set governance-proposals
+            { proposal-id: proposal-id }
+            (merge proposal { executed: true })
+        )
+        (ok true)
+    )
+)
+
+(define-public (purchase-item-with-fee (item-id uint) (category-id uint))
+    (let
+        ((item (unwrap! (map-get? items {item-id: item-id}) ERR-NOT-FOUND))
+         (price (get price item))
+         (seller (get owner item))
+         (marketplace-fee (/ (* price (var-get marketplace-fee-percentage)) u100))
+         (seller-amount (- price marketplace-fee)))
+        (asserts! (not (var-get marketplace-paused)) ERR-MARKETPLACE-PAUSED)
+        (asserts! (get is-listed item) ERR-NOT-FOUND)
+        (try! (stx-transfer? seller-amount tx-sender seller))
+        (try! (stx-transfer? marketplace-fee tx-sender (var-get marketplace-admin)))
+        (map-set items
+            { item-id: item-id }
+            {
+                owner: tx-sender,
+                price: price,
+                title: (get title item),
+                is-listed: false,
+                category-id: category-id
+            }
+        )
+        (ok true)
+    )
+)
+
+(define-read-only (get-governance-proposal (proposal-id uint))
+    (map-get? governance-proposals { proposal-id: proposal-id })
+)
+
+(define-read-only (is-governance-signer (signer principal))
+    (match (map-get? governance-signers { signer: signer })
+        signer-info (get is-active signer-info)
+        false
+    )
+)
+
+(define-read-only (get-marketplace-fee)
+    (var-get marketplace-fee-percentage)
+)
+
+(define-read-only (is-marketplace-paused)
+    (var-get marketplace-paused)
+)
+
+(define-read-only (get-required-signatures)
+    (var-get required-signatures)
+)
