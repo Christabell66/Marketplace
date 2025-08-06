@@ -14,6 +14,11 @@ epoch = 3.1
 path = 'contracts/Marketplace.clar'
 clarity_version = 2
 epoch = 2.5
+
+[contracts.AssetWarranty]
+path = 'contracts/AssetWarranty.clar'
+clarity_version = 3
+epoch = 3.1
 [repl.analysis]
 passes = ['check_checker']
 
