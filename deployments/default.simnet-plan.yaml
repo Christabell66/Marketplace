@@ -58,6 +58,14 @@ plan:
     - id: 1
       transactions:
         - emulated-contract-publish:
+            contract-name: DisputeResolution
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\DisputeResolution.clar"
+            clarity-version: 3
+      epoch: "3.0"
+    - id: 2
+      transactions:
+        - emulated-contract-publish:
             contract-name: AssetWarranty
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
             path: "contracts\\AssetWarranty.clar"
